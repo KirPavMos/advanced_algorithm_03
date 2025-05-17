@@ -1,3 +1,6 @@
+# В класс, который получает данные с WoysaClub, добавить
+# многопоточность, чтобы увеличить скорость загрузки данных
+
 import aiohttp
 import asyncio
 from abc import ABC, abstractmethod
@@ -5,6 +8,7 @@ from bs4 import BeautifulSoup
 from typing import List, Dict
 from concurrent.futures import ThreadPoolExecutor
 import requests
+import numpy as np
 
 class BaseModel(ABC):
     @abstractmethod
@@ -31,10 +35,14 @@ class WoysaClubParser(BaseModel):
         self.data = {}
         self.base_url = "https://woysa.club"
 
-    async def fetch_data_async(self, categories: List[str]) -> None:
+    async def fetch_data_async(self, categories: List[str], batch_size: int = 3) -> None:
+        batches = np.array_split(categories, max(1, len(categories) // batch_size))
+
         async with aiohttp.ClientSession() as session:
-            tasks = [self._fetch_category_async(session, category) for category in categories]
-            await asyncio.gather(*tasks)
+            for batch in batches:
+                tasks = [self._fetch_category_async(session, category) for category in batch]
+                await asyncio.gather(*tasks)
+                await asyncio.sleep(1)
 
     async def _fetch_category_async(self, session: aiohttp.ClientSession, category: str) -> None:
         try:
@@ -48,9 +56,14 @@ class WoysaClubParser(BaseModel):
             print(f"Ошибка при получении данных для категории {category}: {e}")
             self.data[category] = []
 
-    def fetch_data_threaded(self, categories: List[str]) -> None:
+    def fetch_data_threaded(self, categories: List[str], batch_size: int = 3) -> None:
+        batches = np.array_split(categories, max(1, len(categories) // batch_size))
+
         with ThreadPoolExecutor() as executor:
-            executor.map(self._fetch_category_sync, categories)
+            for batch in batches:
+                list(executor.map(self._fetch_category_sync, batch))
+                import time
+                time.sleep(1)
 
     def _fetch_category_sync(self, category: str) -> None:
         try:
@@ -64,7 +77,6 @@ class WoysaClubParser(BaseModel):
             self.data[category] = []
 
     def _parse_category(self, soup: BeautifulSoup) -> List[Dict]:
-
         articles = []
         for article in soup.find_all('article', limit=5):
             articles.append({
@@ -73,25 +85,25 @@ class WoysaClubParser(BaseModel):
             })
         return articles
 
-    async def fetch_data(self, categories: List[str]) -> None:
-        await self.fetch_data_async(categories)
+    async def fetch_data(self, categories: List[str], batch_size: int = 3) -> None:
+        await self.fetch_data_async(categories, batch_size)
 
     def to_dict(self) -> Dict:
         return self.data
-
 
 # Пример использования
 async def main():
     parser = WoysaClubParser()
 
-    # Асинхронная загрузка
-    await parser.fetch_data_async(['#rec580600206', '#rec582709478'])
-    print("Асинхронная загрузка завершена")
+    # Асинхронная загрузка с пакетами
+    categories = ['#rec580600206', '#rec582709478', '#rec581311284', '#rec583456789', '#rec584567890']
+    await parser.fetch_data_async(categories, batch_size=2)
+    print("Асинхронная загрузка с пакетами завершена")
     print(parser.to_dict())
 
-    # Многопоточная загрузка
-    parser.fetch_data_threaded(['#rec581311284'])
-    print("Многопоточная загрузка завершена")
+    # Многопоточная загрузка с пакетами
+    parser.fetch_data_threaded(categories, batch_size=2)
+    print("Многопоточная загрузка с пакетами завершена")
     print(parser.to_dict())
 
 
